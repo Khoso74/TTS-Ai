@@ -925,14 +925,16 @@
 
         function loadVoices() {
             voices = speechSynthesis.getVoices();
+            const voiceSelect = document.getElementById('voiceSelect');
+            voiceSelect.innerHTML = '';
             if (voices.length === 0) {
-                speechSynthesis.onvoiceschanged = function() {
-                    voices = speechSynthesis.getVoices();
-                    populateVoiceSelect();
-                };
-            } else {
-                populateVoiceSelect();
+                // Try to reload voices after a short delay
+                setTimeout(loadVoices, 250);
+                voiceSelect.innerHTML = '<option value="">No voices found. Please use Chrome, Firefox, or Edge.</option>';
+                document.getElementById('currentVoice').textContent = 'Not selected';
+                return;
             }
+            populateVoiceSelect();
         }
 
         function populateVoiceSelect() {
@@ -1340,7 +1342,7 @@
             showStatus(`${format.toUpperCase()} file with ${emotion} emotion and ${tone} tone downloaded successfully!`, 'success');
             
             // Also play the speech synthesis for immediate feedback
-            speakText();
+            // speakText(); // Removed automatic playback
         }
 
         function audioBufferToWav(buffer) {
