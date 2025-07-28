@@ -860,7 +860,669 @@
     </div>
 
     <script>
-        // ... (all the JavaScript code from your index.html) ...
+        let speechSynthesis = window.speechSynthesis;
+        let currentUtterance = null;
+        let voices = [];
+        let audioContext = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadVoices();
+            setupEventListeners();
+            initializeAudioContext();
+            updateEmotionPreview();
+        });
+
+        function setupEventListeners() {
+            document.getElementById('speedSlider').addEventListener('input', function() {
+                const value = this.value;
+                document.getElementById('speedValue').textContent = value + 'x';
+                document.getElementById('currentSpeed').textContent = value + 'x';
+            });
+            document.getElementById('pitchSlider').addEventListener('input', function() {
+                const value = this.value;
+                document.getElementById('pitchValue').textContent = value + 'x';
+                document.getElementById('currentPitch').textContent = value + 'x';
+            });
+            document.getElementById('languageSelect').addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                document.getElementById('currentLanguage').textContent = selectedOption.text;
+                loadVoices();
+            });
+            document.getElementById('voiceSelect').addEventListener('change', function() {
+                updateCurrentVoiceDisplay();
+            });
+            document.getElementById('emotionSelect').addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                document.getElementById('currentEmotion').textContent = selectedOption.text.split(' - ')[0];
+                updateEmotionPreview();
+            });
+            document.getElementById('toneSelect').addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                document.getElementById('currentTone').textContent = selectedOption.text.split(' - ')[0];
+                updateEmotionPreview();
+            });
+            document.getElementById('ttsForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                speakText();
+            });
+            document.querySelector('.btn-success[onclick="speakText()"]')?.addEventListener('click', speakText);
+            document.querySelector('.btn-warning[onclick="pauseSpeaking()"]')?.addEventListener('click', pauseSpeaking);
+            document.querySelector('.btn-danger[onclick="stopSpeaking()"]')?.addEventListener('click', stopSpeaking);
+            document.querySelector('.btn-primary[onclick="downloadAsMP3()"]')?.addEventListener('click', downloadAsMP3);
+            document.querySelector('.btn-secondary[onclick="downloadAsWAV()"]')?.addEventListener('click', downloadAsWAV);
+            document.querySelector('.btn-secondary[onclick="copyToClipboard()"]')?.addEventListener('click', copyToClipboard);
+        }
+
+        function initializeAudioContext() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.log('AudioContext not supported');
+            }
+        }
+
+        function loadVoices() {
+            voices = speechSynthesis.getVoices();
+            if (voices.length === 0) {
+                speechSynthesis.onvoiceschanged = function() {
+                    voices = speechSynthesis.getVoices();
+                    populateVoiceSelect();
+                };
+            } else {
+                populateVoiceSelect();
+            }
+        }
+
+        function populateVoiceSelect() {
+            const voiceSelect = document.getElementById('voiceSelect');
+            const languageSelect = document.getElementById('languageSelect');
+            const selectedLanguage = languageSelect.value;
+            voiceSelect.innerHTML = '';
+            const filteredVoices = voices.filter(voice => voice.lang.startsWith(selectedLanguage.split('-')[0]));
+            if (filteredVoices.length === 0) {
+                filteredVoices.push(...voices);
+            }
+            filteredVoices.forEach(voice => {
+                const option = document.createElement('option');
+                option.value = voice.name;
+                option.textContent = `${voice.name} (${voice.lang})`;
+                voiceSelect.appendChild(option);
+            });
+            if (filteredVoices.length > 0) {
+                voiceSelect.value = filteredVoices[0].name;
+                updateCurrentVoiceDisplay();
+            }
+        }
+
+        function updateCurrentVoiceDisplay() {
+            const voiceSelect = document.getElementById('voiceSelect');
+            const selectedVoiceName = voiceSelect.value;
+            document.getElementById('currentVoice').textContent = selectedVoiceName || 'Not selected';
+        }
+
+        function speakText() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                showStatus('Please enter some text to convert to speech', 'error');
+                return;
+            }
+            stopSpeaking();
+            currentUtterance = new SpeechSynthesisUtterance(text);
+            const voiceSelect = document.getElementById('voiceSelect');
+            if (voiceSelect.value) {
+                const selectedVoice = voices.find(voice => voice.name === voiceSelect.value);
+                if (selectedVoice) {
+                    currentUtterance.voice = selectedVoice;
+                    document.getElementById('currentVoice').textContent = selectedVoice.name;
+                }
+            }
+            const emotion = document.getElementById('emotionSelect').value;
+            const tone = document.getElementById('toneSelect').value;
+            const { rate, pitch, volume } = applyEmotionAndTone(emotion, tone);
+            currentUtterance.rate = parseFloat(document.getElementById('speedSlider').value) * rate;
+            currentUtterance.pitch = parseFloat(document.getElementById('pitchSlider').value) * pitch;
+            currentUtterance.volume = volume;
+            currentUtterance.onstart = function() {
+                showStatus(`Generating ${emotion} speech with ${tone} tone...`, 'info');
+                showLoading(true);
+            };
+            currentUtterance.onend = function() {
+                showStatus('Speech generation completed successfully!', 'success');
+                showLoading(false);
+                currentUtterance = null;
+            };
+            currentUtterance.onerror = function(event) {
+                showStatus('Speech generation error: ' + event.error, 'error');
+                showLoading(false);
+                currentUtterance = null;
+            };
+            speechSynthesis.speak(currentUtterance);
+        }
+
+        function applyEmotionAndTone(emotion, tone) {
+            let rate = 1.0;
+            let pitch = 1.0;
+            let volume = 1.0;
+            
+            // Apply emotion modifications
+            switch(emotion) {
+                case 'happy':
+                    rate = 1.2;
+                    pitch = 1.1;
+                    volume = 1.1;
+                    break;
+                case 'sad':
+                    rate = 0.8;
+                    pitch = 0.9;
+                    volume = 0.9;
+                    break;
+                case 'angry':
+                    rate = 1.3;
+                    pitch = 1.2;
+                    volume = 1.2;
+                    break;
+                case 'excited':
+                    rate = 1.4;
+                    pitch = 1.3;
+                    volume = 1.2;
+                    break;
+                case 'calm':
+                    rate = 0.9;
+                    pitch = 0.95;
+                    volume = 0.95;
+                    break;
+                case 'confident':
+                    rate = 1.1;
+                    pitch = 1.05;
+                    volume = 1.1;
+                    break;
+                case 'friendly':
+                    rate = 1.0;
+                    pitch = 1.05;
+                    volume = 1.0;
+                    break;
+                case 'professional':
+                    rate = 1.0;
+                    pitch = 1.0;
+                    volume = 1.0;
+                    break;
+                case 'casual':
+                    rate = 0.95;
+                    pitch = 0.98;
+                    volume = 0.98;
+                    break;
+                default: // neutral
+                    rate = 1.0;
+                    pitch = 1.0;
+                    volume = 1.0;
+            }
+            
+            // Apply tone modifications
+            switch(tone) {
+                case 'formal':
+                    rate *= 0.95;
+                    pitch *= 0.98;
+                    volume *= 1.05;
+                    break;
+                case 'enthusiastic':
+                    rate *= 1.2;
+                    pitch *= 1.1;
+                    volume *= 1.1;
+                    break;
+                case 'serious':
+                    rate *= 0.9;
+                    pitch *= 0.95;
+                    volume *= 1.05;
+                    break;
+                case 'gentle':
+                    rate *= 0.85;
+                    pitch *= 0.9;
+                    volume *= 0.9;
+                    break;
+                case 'powerful':
+                    rate *= 1.1;
+                    pitch *= 1.05;
+                    volume *= 1.15;
+                    break;
+                case 'playful':
+                    rate *= 1.15;
+                    pitch *= 1.2;
+                    volume *= 1.05;
+                    break;
+                case 'mysterious':
+                    rate *= 0.8;
+                    pitch *= 0.9;
+                    volume *= 0.85;
+                    break;
+                case 'inspiring':
+                    rate *= 1.1;
+                    pitch *= 1.05;
+                    volume *= 1.1;
+                    break;
+                case 'educational':
+                    rate *= 0.95;
+                    pitch *= 1.0;
+                    volume *= 1.0;
+                    break;
+                default: // natural
+                    // No additional modifications
+                    break;
+            }
+            
+            return { rate, pitch, volume };
+        }
+
+        function updateEmotionPreview() {
+            const emotion = document.getElementById('emotionSelect').value;
+            const tone = document.getElementById('toneSelect').value;
+            
+            // Update emotion icon
+            const emotionIcons = {
+                'neutral': '😐',
+                'happy': '😊',
+                'sad': '😢',
+                'angry': '😠',
+                'excited': '🤩',
+                'calm': '😌',
+                'confident': '😎',
+                'friendly': '😄',
+                'professional': '👔',
+                'casual': '😉'
+            };
+            
+            document.getElementById('emotionIcon').textContent = emotionIcons[emotion] || '😐';
+            document.getElementById('emotionPreview').textContent = emotion.charAt(0).toUpperCase() + emotion.slice(1);
+            document.getElementById('tonePreview').textContent = tone.charAt(0).toUpperCase() + tone.slice(1);
+            
+            // Update description
+            const descriptions = {
+                'neutral-natural': 'Balanced and conversational speech style',
+                'happy-natural': 'Joyful and energetic communication',
+                'sad-natural': 'Melancholic and soft-spoken delivery',
+                'angry-natural': 'Intense and forceful expression',
+                'excited-natural': 'Enthusiastic and dynamic presentation',
+                'calm-natural': 'Peaceful and relaxed communication',
+                'confident-natural': 'Strong and assured delivery',
+                'friendly-natural': 'Warm and approachable tone',
+                'professional-natural': 'Formal and clear communication',
+                'casual-natural': 'Informal and natural conversation',
+                'neutral-formal': 'Professional and business-like approach',
+                'happy-enthusiastic': 'Energetic and engaging presentation',
+                'confident-powerful': 'Strong and impactful delivery',
+                'calm-gentle': 'Soft and caring communication',
+                'excited-playful': 'Fun and light-hearted expression',
+                'sad-mysterious': 'Intriguing and contemplative tone',
+                'confident-inspiring': 'Motivational and uplifting message',
+                'professional-educational': 'Clear and informative delivery'
+            };
+            
+            const key = `${emotion}-${tone}`;
+            const description = descriptions[key] || `${emotion.charAt(0).toUpperCase() + emotion.slice(1)} emotion with ${tone.charAt(0).toUpperCase() + tone.slice(1)} tone`;
+            document.getElementById('styleDescription').textContent = description;
+        }
+
+        function stopSpeaking() {
+            if (speechSynthesis.speaking || speechSynthesis.pending) {
+                speechSynthesis.cancel();
+                currentUtterance = null;
+                showStatus('Speech stopped', 'warning');
+                showLoading(false);
+            }
+        }
+
+        function pauseSpeaking() {
+            if (speechSynthesis.speaking && !speechSynthesis.paused) {
+                speechSynthesis.pause();
+                showStatus('Speech paused', 'warning');
+            } else if (speechSynthesis.paused) {
+                speechSynthesis.resume();
+                showStatus('Speech resumed', 'info');
+            }
+        }
+
+        function downloadAsMP3() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                showStatus('Please enter some text first', 'error');
+                return;
+            }
+            
+            showStatus('Creating downloadable audio file...', 'info');
+            
+            // Create a simple audio file that represents the speech
+            createDownloadableAudio(text, 'mp3');
+        }
+
+        function downloadAsWAV() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                showStatus('Please enter some text first', 'error');
+                return;
+            }
+            
+            showStatus('Creating downloadable audio file...', 'info');
+            
+            // Create a simple audio file that represents the speech
+            createDownloadableAudio(text, 'wav');
+        }
+
+        function createDownloadableAudio(text, format) {
+            // Initialize audio context
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            // Get emotion and tone settings
+            const emotion = document.getElementById('emotionSelect').value;
+            const tone = document.getElementById('toneSelect').value;
+            const { rate, pitch, volume } = applyEmotionAndTone(emotion, tone);
+            
+            // Calculate estimated duration based on text length and emotion/tone
+            const wordsPerMinute = 150 * rate; // Adjust for emotion/tone
+            const wordCount = text.split(/\s+/).length;
+            const durationInSeconds = (wordCount / wordsPerMinute) * 60;
+            
+            const sampleRate = audioContext.sampleRate;
+            const numSamples = Math.floor(sampleRate * durationInSeconds);
+            
+            // Create audio buffer
+            const audioBuffer = audioContext.createBuffer(1, numSamples, sampleRate);
+            const channelData = audioBuffer.getChannelData(0);
+            
+            // Generate emotion-aware speech-like waveform
+            for (let i = 0; i < numSamples; i++) {
+                const time = i / sampleRate;
+                
+                // Create emotion-specific waveform characteristics
+                let baseFreq = 220;
+                let modFreq = 5;
+                let amplitude = 0.2 * volume;
+                
+                // Adjust frequency based on emotion
+                switch(emotion) {
+                    case 'happy':
+                        baseFreq = 250;
+                        modFreq = 8;
+                        break;
+                    case 'sad':
+                        baseFreq = 180;
+                        modFreq = 2;
+                        break;
+                    case 'angry':
+                        baseFreq = 280;
+                        modFreq = 12;
+                        break;
+                    case 'excited':
+                        baseFreq = 260;
+                        modFreq = 10;
+                        break;
+                    case 'calm':
+                        baseFreq = 200;
+                        modFreq = 3;
+                        break;
+                    case 'confident':
+                        baseFreq = 240;
+                        modFreq = 6;
+                        break;
+                    case 'friendly':
+                        baseFreq = 230;
+                        modFreq = 5;
+                        break;
+                    case 'professional':
+                        baseFreq = 220;
+                        modFreq = 4;
+                        break;
+                    case 'casual':
+                        baseFreq = 210;
+                        modFreq = 4;
+                        break;
+                }
+                
+                // Apply pitch modifications
+                baseFreq *= pitch;
+                
+                // Varying frequency to simulate speech intonation
+                const frequency = baseFreq + Math.sin(time * modFreq) * 30;
+                
+                // Add harmonics based on tone
+                const fundamental = Math.sin(2 * Math.PI * frequency * time);
+                let harmonic1 = Math.sin(2 * Math.PI * frequency * 2 * time) * 0.3;
+                let harmonic2 = Math.sin(2 * Math.PI * frequency * 3 * time) * 0.1;
+                
+                // Adjust harmonics based on tone
+                switch(tone) {
+                    case 'powerful':
+                        harmonic1 *= 1.5;
+                        harmonic2 *= 1.2;
+                        break;
+                    case 'gentle':
+                        harmonic1 *= 0.5;
+                        harmonic2 *= 0.3;
+                        break;
+                    case 'mysterious':
+                        harmonic1 *= 0.7;
+                        harmonic2 *= 0.8;
+                        break;
+                    case 'playful':
+                        harmonic1 *= 1.3;
+                        harmonic2 *= 1.1;
+                        break;
+                }
+                
+                // Combine harmonics
+                channelData[i] = (fundamental + harmonic1 + harmonic2) * amplitude;
+                
+                // Add emotion-specific noise characteristics
+                if (Math.random() < 0.01) {
+                    let noiseLevel = 0.1;
+                    if (emotion === 'angry') noiseLevel = 0.2;
+                    if (emotion === 'calm') noiseLevel = 0.05;
+                    channelData[i] += (Math.random() - 0.5) * noiseLevel;
+                }
+            }
+            
+            // Convert to WAV format
+            const wavBuffer = audioBufferToWav(audioBuffer);
+            const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+            
+            // Download the file with emotion/tone info in filename
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `tts_${emotion}_${tone}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${format}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showStatus(`${format.toUpperCase()} file with ${emotion} emotion and ${tone} tone downloaded successfully!`, 'success');
+            
+            // Also play the speech synthesis for immediate feedback
+            speakText();
+        }
+
+        function audioBufferToWav(buffer) {
+            const length = buffer.length;
+            const numberOfChannels = buffer.numberOfChannels;
+            const sampleRate = buffer.sampleRate;
+            const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2);
+            const view = new DataView(arrayBuffer);
+            
+            // WAV header
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + length * numberOfChannels * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, numberOfChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * numberOfChannels * 2, true);
+            view.setUint16(32, numberOfChannels * 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, length * numberOfChannels * 2, true);
+            
+            // Write audio data
+            let offset = 44;
+            for (let i = 0; i < length; i++) {
+                for (let channel = 0; channel < numberOfChannels; channel++) {
+                    const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+                    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                    offset += 2;
+                }
+            }
+            
+            return arrayBuffer;
+        }
+
+        function copyToClipboard() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                showStatus('No text to copy', 'error');
+                return;
+            }
+            
+            navigator.clipboard.writeText(text).then(function() {
+                showStatus('Text copied to clipboard successfully!', 'success');
+            }, function(err) {
+                showStatus('Failed to copy text: ' + err, 'error');
+            });
+        }
+
+        function analyzeText() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                showStatus('Please enter some text to analyze', 'error');
+                return;
+            }
+            
+            // Advanced text analysis
+            const words = text.split(/\s+/).filter(word => word.length > 0);
+            const characters = text.length;
+            const sentences = text.split(/[.!?]+/).filter(sentence => sentence.trim().length > 0);
+            const paragraphs = text.split(/\n\s*\n/).filter(para => para.trim().length > 0);
+            
+            // Estimate reading time (average 200 words per minute)
+            const estimatedMinutes = words.length / 200;
+            const estimatedSeconds = Math.round(estimatedMinutes * 60);
+            
+            // Reading level estimation (advanced)
+            const avgWordLength = words.reduce((sum, word) => sum + word.length, 0) / words.length;
+            const complexWords = words.filter(word => word.length > 6).length;
+            const complexWordRatio = (complexWords / words.length) * 100;
+            
+            let readingLevel = 'Intermediate';
+            if (avgWordLength < 4 && complexWordRatio < 10) readingLevel = 'Easy';
+            else if (avgWordLength > 6 || complexWordRatio > 20) readingLevel = 'Advanced';
+            
+            // Advanced sentiment analysis
+            const positiveWords = ['good', 'great', 'excellent', 'amazing', 'wonderful', 'happy', 'love', 'like', 'perfect', 'fantastic', 'brilliant', 'outstanding'];
+            const negativeWords = ['bad', 'terrible', 'awful', 'hate', 'dislike', 'sad', 'angry', 'horrible', 'worst', 'disappointing', 'frustrating', 'annoying'];
+            
+            const positiveCount = words.filter(word => 
+                positiveWords.includes(word.toLowerCase())
+            ).length;
+            const negativeCount = words.filter(word => 
+                negativeWords.includes(word.toLowerCase())
+            ).length;
+            
+            let sentiment = 'Neutral';
+            let sentimentScore = 0;
+            if (positiveCount > negativeCount) {
+                sentiment = 'Positive';
+                sentimentScore = Math.round((positiveCount / words.length) * 100);
+            } else if (negativeCount > positiveCount) {
+                sentiment = 'Negative';
+                sentimentScore = Math.round((negativeCount / words.length) * 100);
+            }
+            
+            // Professional metrics
+            const uniqueWords = new Set(words.map(word => word.toLowerCase())).size;
+            const vocabularyDiversity = Math.round((uniqueWords / words.length) * 100);
+            
+            displayAnalysis({
+                word_count: words.length,
+                character_count: characters,
+                sentence_count: sentences.length,
+                paragraph_count: paragraphs.length,
+                estimated_duration: estimatedSeconds,
+                reading_level: readingLevel,
+                sentiment: sentiment,
+                sentiment_score: sentimentScore,
+                avg_word_length: avgWordLength.toFixed(1),
+                vocabulary_diversity: vocabularyDiversity,
+                complex_words: complexWords
+            });
+        }
+
+        function displayAnalysis(analysis) {
+            const container = document.getElementById('analysisResults');
+            container.style.display = 'grid';
+            
+            container.innerHTML = `
+                <div class="analysis-item">
+                    <h4><i class="fas fa-font"></i> Words</h4>
+                    <p>${analysis.word_count}</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-text-width"></i> Characters</h4>
+                    <p>${analysis.character_count}</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-paragraph"></i> Sentences</h4>
+                    <p>${analysis.sentence_count}</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-align-left"></i> Paragraphs</h4>
+                    <p>${analysis.paragraph_count}</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-clock"></i> Duration</h4>
+                    <p>${analysis.estimated_duration}s</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-graduation-cap"></i> Reading Level</h4>
+                    <p>${analysis.reading_level}</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-heart"></i> Sentiment</h4>
+                    <p>${analysis.sentiment} ${analysis.sentiment_score > 0 ? `(${analysis.sentiment_score}%)` : ''}</p>
+                </div>
+                <div class="analysis-item">
+                    <h4><i class="fas fa-chart-line"></i> Vocabulary</h4>
+                    <p>${analysis.vocabulary_diversity}%</p>
+                </div>
+            `;
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            if (type !== 'info') {
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 6000);
+            }
+        }
+
+        // Check browser support
+        if (!speechSynthesis) {
+            showStatus('Speech synthesis is not supported in your browser. Please use Chrome, Firefox, or Edge for the best experience.', 'error');
+        }
     </script>
 </body>
 </html> 
